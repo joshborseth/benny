@@ -2,8 +2,8 @@ import { useState } from "react";
 import { convexQuery } from "@convex-dev/react-query";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useMutation } from "convex/react";
-import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import { useMutation, useQuery } from "convex/react";
+import { PencilIcon, PlayIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { api } from "@benny/backend/api";
 import type { Doc, Id } from "@benny/backend/dataModel";
 import {
@@ -16,13 +16,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@benny/ui/components/alert-dialog";
+import { Badge } from "@benny/ui/components/badge";
 import { Button } from "@benny/ui/components/button";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyTitle,
-} from "@benny/ui/components/empty";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@benny/ui/components/empty";
 import {
   Table,
   TableBody,
@@ -31,13 +27,16 @@ import {
   TableHeader,
   TableRow,
 } from "@benny/ui/components/table";
-import { UrlFormDialog } from "@/components/url-form-dialog";
-import { emptyUrlFormValues, type UrlFormValues } from "@/lib/schemas/url-form";
+import { TargetFormDialog } from "@/components/target-form-dialog";
+import { emptyTargetFormValues, type TargetFormValues } from "@/lib/schemas/target-form";
 
 export const Route = createFileRoute("/")({
-  component: UrlsPage,
+  component: TargetsPage,
   loader: async ({ context }) => {
-    await context.queryClient.ensureQueryData(convexQuery(api.urls.list, {}));
+    await Promise.all([
+      context.queryClient.ensureQueryData(convexQuery(api.targets.list, {})),
+      context.queryClient.ensureQueryData(convexQuery(api.runs.listRecent, {})),
+    ]);
   },
 });
 
@@ -48,22 +47,54 @@ function formatCreatedAt(timestamp: number) {
   }).format(timestamp);
 }
 
-type DialogState =
-  | { type: "closed" }
-  | { type: "create" }
-  | { type: "edit"; row: Doc<"urls"> };
+function CredentialBadge({ targetId }: { targetId: Id<"targets"> }) {
+  const status = useQuery(api.credentials.statusByTarget, { targetId });
+  if (status === undefined) {
+    return <span className="font-mono text-xs text-muted-foreground">…</span>;
+  }
+  return (
+    <Badge variant={status.hasCredentials ? "default" : "secondary"}>
+      {status.hasCredentials ? "Set" : "None"}
+    </Badge>
+  );
+}
 
-function UrlsPage() {
-  const { data: urls } = useSuspenseQuery(convexQuery(api.urls.list, {}));
-  const removeUrl = useMutation(api.urls.remove);
+function RunStatusBadge({ status }: { status: Doc<"runs">["status"] }) {
+  const variant =
+    status === "succeeded"
+      ? "default"
+      : status === "failed"
+        ? "destructive"
+        : status === "running"
+          ? "outline"
+          : "secondary";
+  return <Badge variant={variant}>{status}</Badge>;
+}
+
+type DialogState = { type: "closed" } | { type: "create" } | { type: "edit"; row: Doc<"targets"> };
+
+function TargetsPage() {
+  const { data: targets } = useSuspenseQuery(convexQuery(api.targets.list, {}));
+  const { data: runs } = useSuspenseQuery(convexQuery(api.runs.listRecent, {}));
+  const removeTarget = useMutation(api.targets.remove);
+  const enqueueRun = useMutation(api.runs.enqueue);
 
   const [dialog, setDialog] = useState<DialogState>({ type: "closed" });
-  const [deleteId, setDeleteId] = useState<Id<"urls"> | null>(null);
+  const [deleteId, setDeleteId] = useState<Id<"targets"> | null>(null);
+  const [enqueueingId, setEnqueueingId] = useState<Id<"targets"> | null>(null);
 
-  const formDefaults: UrlFormValues =
+  const formDefaults: TargetFormValues =
     dialog.type === "edit"
-      ? { url: dialog.row.url, enabled: dialog.row.enabled }
-      : emptyUrlFormValues;
+      ? {
+          url: dialog.row.url,
+          goal: dialog.row.goal,
+          enabled: dialog.row.enabled,
+          username: "",
+          password: "",
+        }
+      : emptyTargetFormValues;
+
+  const targetById = new Map(targets.map((t) => [t._id, t]));
 
   return (
     <main className="relative mx-auto flex min-h-svh w-full max-w-5xl flex-col gap-8 p-6 md:p-10">
@@ -71,15 +102,16 @@ function UrlsPage() {
         <div className="space-y-2">
           <p className="font-mono text-[11px] tracking-[0.22em] text-primary uppercase">Benny</p>
           <h1 className="font-heading text-3xl font-medium tracking-tight text-balance">
-            Scrape URLs
+            Scrape targets
           </h1>
-          <p className="max-w-md text-sm text-muted-foreground">
-            Manage URLs you plan to scrape. Scraping itself is not wired up yet.
+          <p className="max-w-lg text-sm text-muted-foreground">
+            Configure sites for the AI browser worker. Enqueue a run, then start{" "}
+            <code className="font-mono text-xs">bun run worker</code> with your OpenAI key.
           </p>
         </div>
         <Button type="button" onClick={() => setDialog({ type: "create" })}>
           <PlusIcon data-icon="inline-start" />
-          Add URL
+          Add target
         </Button>
       </header>
 
@@ -87,15 +119,17 @@ function UrlsPage() {
         className="animate-fade-up rounded-lg border border-border/80 bg-card/80 shadow-[0_1px_0_oklch(0.92_0.01_230)] backdrop-blur-sm"
         style={{ animationDelay: "80ms" }}
       >
-        {urls.length === 0 ? (
+        {targets.length === 0 ? (
           <Empty className="border-0 py-20">
             <EmptyHeader>
-              <EmptyTitle>No URLs yet</EmptyTitle>
-              <EmptyDescription>Add a URL to start building your scrape list.</EmptyDescription>
+              <EmptyTitle>No targets yet</EmptyTitle>
+              <EmptyDescription>
+                Add a URL, scrape goal, and optional login credentials.
+              </EmptyDescription>
             </EmptyHeader>
             <Button type="button" onClick={() => setDialog({ type: "create" })}>
               <PlusIcon data-icon="inline-start" />
-              Add URL
+              Add target
             </Button>
           </Empty>
         ) : (
@@ -106,18 +140,21 @@ function UrlsPage() {
                   URL
                 </TableHead>
                 <TableHead className="font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
-                  Enabled
+                  Goal
                 </TableHead>
                 <TableHead className="font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
-                  Created
+                  Creds
                 </TableHead>
-                <TableHead className="w-24 px-4 text-right font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
+                <TableHead className="font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
+                  Enabled
+                </TableHead>
+                <TableHead className="w-36 px-4 text-right font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
                   Actions
                 </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {urls.map((row) => (
+              {targets.map((row) => (
                 <TableRow key={row._id} className="hover:bg-accent/40">
                   <TableCell className="px-4 py-3">
                     <a
@@ -129,14 +166,32 @@ function UrlsPage() {
                       {row.url}
                     </a>
                   </TableCell>
+                  <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground">
+                    {row.goal}
+                  </TableCell>
+                  <TableCell>
+                    <CredentialBadge targetId={row._id} />
+                  </TableCell>
                   <TableCell className="font-mono text-xs text-muted-foreground">
                     {row.enabled ? "On" : "Off"}
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-muted-foreground">
-                    {formatCreatedAt(row._creationTime)}
-                  </TableCell>
                   <TableCell className="px-4 text-right">
                     <div className="inline-flex items-center gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={`Run scrape for ${row.url}`}
+                        disabled={enqueueingId === row._id}
+                        onClick={() => {
+                          setEnqueueingId(row._id);
+                          void enqueueRun({ targetId: row._id }).finally(() =>
+                            setEnqueueingId(null),
+                          );
+                        }}
+                      >
+                        <PlayIcon />
+                      </Button>
                       <Button
                         type="button"
                         variant="ghost"
@@ -164,7 +219,64 @@ function UrlsPage() {
         )}
       </section>
 
-      <UrlFormDialog
+      <section className="animate-fade-up space-y-3" style={{ animationDelay: "140ms" }}>
+        <h2 className="font-heading text-lg font-medium tracking-tight">Recent runs</h2>
+        <div className="rounded-lg border border-border/80 bg-card/80 shadow-[0_1px_0_oklch(0.92_0.01_230)] backdrop-blur-sm">
+          {runs.length === 0 ? (
+            <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+              No runs yet. Hit play on a target to enqueue one.
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="px-4 font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
+                    Target
+                  </TableHead>
+                  <TableHead className="font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
+                    Status
+                  </TableHead>
+                  <TableHead className="font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
+                    Created
+                  </TableHead>
+                  <TableHead className="px-4 font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
+                    Result / error
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {runs.map((run) => {
+                  const target = targetById.get(run.targetId);
+                  const detail =
+                    run.status === "failed"
+                      ? run.error
+                      : run.result
+                        ? JSON.stringify(run.result)
+                        : run.trace;
+                  return (
+                    <TableRow key={run._id} className="hover:bg-accent/40">
+                      <TableCell className="px-4 py-3 font-mono text-[13px]">
+                        {target?.url ?? String(run.targetId)}
+                      </TableCell>
+                      <TableCell>
+                        <RunStatusBadge status={run.status} />
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {formatCreatedAt(run._creationTime)}
+                      </TableCell>
+                      <TableCell className="max-w-xs truncate px-4 font-mono text-xs text-muted-foreground">
+                        {detail ?? "—"}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+      </section>
+
+      <TargetFormDialog
         open={dialog.type !== "closed"}
         onOpenChange={(open) => {
           if (!open) {
@@ -172,7 +284,7 @@ function UrlsPage() {
           }
         }}
         mode={dialog.type === "edit" ? "edit" : "create"}
-        urlId={dialog.type === "edit" ? dialog.row._id : undefined}
+        targetId={dialog.type === "edit" ? dialog.row._id : undefined}
         defaultValues={formDefaults}
       />
 
@@ -186,9 +298,9 @@ function UrlsPage() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete URL?</AlertDialogTitle>
+            <AlertDialogTitle>Delete target?</AlertDialogTitle>
             <AlertDialogDescription>
-              This removes the URL from your scrape list. This action cannot be undone.
+              This removes the target, its credentials, and run history. This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -197,7 +309,7 @@ function UrlsPage() {
               variant="destructive"
               onClick={() => {
                 if (deleteId) {
-                  void removeUrl({ id: deleteId }).then(() => setDeleteId(null));
+                  void removeTarget({ id: deleteId }).then(() => setDeleteId(null));
                 }
               }}
             >

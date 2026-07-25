@@ -7,7 +7,8 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "turbo run dev",
+    "dev": "turbo run dev --filter=@benny/web --filter=@benny/backend",
+    "worker": "turbo run dev --filter=@benny/worker",
     "build": "turbo run build",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",

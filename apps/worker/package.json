@@ -1,0 +1,25 @@
+{
+  "name": "@benny/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@benny/backend": "workspace:*",
+    "@browserbasehq/stagehand": "^3.0.0",
+    "convex": "^1.42.3",
+    "dotenv": "^16.6.1",
+    "playwright-core": "^1.62.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@benny/config": "workspace:*",
+    "@types/node": "^22",
+    "tsx": "^4.20.3",
+    "typescript": "^6"
+  }
+}

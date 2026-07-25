@@ -8,7 +8,10 @@
  * @module
  */
 
-import type * as urls from "../urls.js";
+import type * as credentials from "../credentials.js";
+import type * as lib_crypto from "../lib/crypto.js";
+import type * as runs from "../runs.js";
+import type * as targets from "../targets.js";
 
 import type {
   ApiFromModules,
@@ -17,7 +20,10 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  urls: typeof urls;
+  credentials: typeof credentials;
+  "lib/crypto": typeof lib_crypto;
+  runs: typeof runs;
+  targets: typeof targets;
 }>;
 
 /**
