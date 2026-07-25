@@ -4,5 +4,6 @@ import { v } from "convex/values";
 export default defineSchema({
   urls: defineTable({
     url: v.string(),
+    enabled: v.boolean(),
   }),
 });

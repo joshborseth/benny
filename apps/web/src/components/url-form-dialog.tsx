@@ -11,8 +11,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@benny/ui/components/dialog";
-import { Field, FieldError, FieldGroup, FieldLabel } from "@benny/ui/components/field";
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@benny/ui/components/field";
 import { Input } from "@benny/ui/components/input";
+import { Switch } from "@benny/ui/components/switch";
 import {
   emptyUrlFormValues,
   urlFormSchema,
@@ -48,10 +56,11 @@ function UrlFormFields({
     },
     onSubmit: async ({ value }) => {
       const url = value.url.trim();
+      const { enabled } = value;
       if (mode === "edit" && urlId) {
-        await updateUrl({ id: urlId, url });
+        await updateUrl({ id: urlId, url, enabled });
       } else {
-        await createUrl({ url });
+        await createUrl({ url, enabled });
       }
       onOpenChange(false);
     },
@@ -91,6 +100,25 @@ function UrlFormFields({
                 </Field>
               );
             }}
+          />
+          <form.Field
+            name="enabled"
+            children={(field) => (
+              <Field orientation="horizontal">
+                <FieldContent>
+                  <FieldLabel htmlFor={field.name}>Enabled</FieldLabel>
+                  <FieldDescription>
+                    Turn on or off auto background scraping for this URL.
+                  </FieldDescription>
+                </FieldContent>
+                <Switch
+                  id={field.name}
+                  checked={field.state.value}
+                  onCheckedChange={field.handleChange}
+                  onBlur={field.handleBlur}
+                />
+              </Field>
+            )}
           />
         </FieldGroup>
       </form>

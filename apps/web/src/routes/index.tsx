@@ -61,7 +61,9 @@ function UrlsPage() {
   const [deleteId, setDeleteId] = useState<Id<"urls"> | null>(null);
 
   const formDefaults: UrlFormValues =
-    dialog.type === "edit" ? { url: dialog.row.url } : emptyUrlFormValues;
+    dialog.type === "edit"
+      ? { url: dialog.row.url, enabled: dialog.row.enabled }
+      : emptyUrlFormValues;
 
   return (
     <main className="relative mx-auto flex min-h-svh w-full max-w-5xl flex-col gap-8 p-6 md:p-10">
@@ -104,6 +106,9 @@ function UrlsPage() {
                   URL
                 </TableHead>
                 <TableHead className="font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
+                  Enabled
+                </TableHead>
+                <TableHead className="font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
                   Created
                 </TableHead>
                 <TableHead className="w-24 px-4 text-right font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
@@ -123,6 +128,9 @@ function UrlsPage() {
                     >
                       {row.url}
                     </a>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">
+                    {row.enabled ? "On" : "Off"}
                   </TableCell>
                   <TableCell className="font-mono text-xs text-muted-foreground">
                     {formatCreatedAt(row._creationTime)}

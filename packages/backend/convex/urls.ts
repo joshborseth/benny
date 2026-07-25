@@ -11,10 +11,12 @@ export const list = query({
 export const create = mutation({
   args: {
     url: v.string(),
+    enabled: v.boolean(),
   },
   handler: async (ctx, args) => {
     return await ctx.db.insert("urls", {
       url: args.url,
+      enabled: args.enabled,
     });
   },
 });
@@ -23,6 +25,7 @@ export const update = mutation({
   args: {
     id: v.id("urls"),
     url: v.string(),
+    enabled: v.boolean(),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db.get(args.id);
@@ -31,6 +34,7 @@ export const update = mutation({
     }
     await ctx.db.replace(args.id, {
       url: args.url,
+      enabled: args.enabled,
     });
   },
 });
