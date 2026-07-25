@@ -9,10 +9,10 @@
     "./convex/*": "./convex/*"
   },
   "scripts": {
-    "dev": "convex dev",
-    "setup": "convex dev --once && node ./scripts/sync-web-env.mjs",
-    "deploy": "convex deploy",
-    "codegen": "convex codegen",
+    "dev": "cd ../.. && convex dev",
+    "setup": "cd ../.. && convex dev --once",
+    "deploy": "cd ../.. && convex deploy",
+    "codegen": "cd ../.. && convex codegen",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

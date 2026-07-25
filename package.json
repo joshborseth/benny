@@ -18,6 +18,9 @@
     "typecheck": "turbo run typecheck",
     "setup": "turbo run setup --filter=@benny/backend"
   },
+  "dependencies": {
+    "convex": "^1.42.3"
+  },
   "devDependencies": {
     "oxfmt": "^0.60.0",
     "oxlint": "^1.75.0",

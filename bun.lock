@@ -4,6 +4,9 @@
   "workspaces": {
     "": {
       "name": "benny",
+      "dependencies": {
+        "convex": "^1.42.3",
+      },
       "devDependencies": {
         "oxfmt": "^0.60.0",
         "oxlint": "^1.75.0",

@@ -15,11 +15,13 @@ packages/config       @benny/config — shared TS, oxlint, oxfmt
 
 ```bash
 bun install
-bun run setup   # Convex login / project (named benny) + syncs VITE_CONVEX_URL
+bun run setup   # Convex login / project (named benny); writes root .env.local
 bun quality:fix
 bun typecheck
 bun dev
 ```
+
+Env lives in a single root `.env.local` (see `.env.example`). Vite and Convex both use that file — no per-package copies.
 
 ## Scripts
 

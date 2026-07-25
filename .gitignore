@@ -18,6 +18,3 @@ todos.json
 
 # typescript
 *.tsbuildinfo
-
-# convex
-packages/backend/.env.local
