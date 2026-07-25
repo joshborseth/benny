@@ -32,7 +32,7 @@ import {
   TableRow,
 } from "@benny/ui/components/table";
 import { UrlFormDialog } from "@/components/url-form-dialog";
-import { emptyUrlFormValues, type UrlFormValues } from "@/lib/url-form-schema";
+import { emptyUrlFormValues, type UrlFormValues } from "@/lib/schemas/url-form";
 
 export const Route = createFileRoute("/")({
   component: UrlsPage,

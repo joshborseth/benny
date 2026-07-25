@@ -17,7 +17,7 @@ import {
   emptyUrlFormValues,
   urlFormSchema,
   type UrlFormValues,
-} from "@/lib/url-form-schema";
+} from "@/lib/schemas/url-form";
 
 type UrlFormDialogProps = {
   open: boolean;
