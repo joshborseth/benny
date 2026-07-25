@@ -64,11 +64,14 @@ function UrlsPage() {
     dialog.type === "edit" ? { url: dialog.row.url } : emptyUrlFormValues;
 
   return (
-    <main className="mx-auto flex min-h-svh w-full max-w-5xl flex-col gap-6 p-6">
-      <header className="flex items-start justify-between gap-4">
-        <div className="space-y-1">
-          <h1 className="font-heading text-2xl font-medium tracking-tight">Scrape URLs</h1>
-          <p className="text-sm text-muted-foreground">
+    <main className="relative mx-auto flex min-h-svh w-full max-w-5xl flex-col gap-8 p-6 md:p-10">
+      <header className="animate-fade-up flex items-start justify-between gap-4">
+        <div className="space-y-2">
+          <p className="font-mono text-[11px] tracking-[0.22em] text-primary uppercase">Benny</p>
+          <h1 className="font-heading text-3xl font-medium tracking-tight text-balance">
+            Scrape URLs
+          </h1>
+          <p className="max-w-md text-sm text-muted-foreground">
             Manage URLs you plan to scrape. Scraping itself is not wired up yet.
           </p>
         </div>
@@ -78,69 +81,80 @@ function UrlsPage() {
         </Button>
       </header>
 
-      {urls.length === 0 ? (
-        <Empty className="border py-16">
-          <EmptyHeader>
-            <EmptyTitle>No URLs yet</EmptyTitle>
-            <EmptyDescription>Add a URL to start building your scrape list.</EmptyDescription>
-          </EmptyHeader>
-          <Button type="button" onClick={() => setDialog({ type: "create" })}>
-            <PlusIcon data-icon="inline-start" />
-            Add URL
-          </Button>
-        </Empty>
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>URL</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead className="w-24 text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {urls.map((row) => (
-              <TableRow key={row._id}>
-                <TableCell>
-                  <a
-                    href={row.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-medium underline-offset-4 hover:underline"
-                  >
-                    {row.url}
-                  </a>
-                </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {formatCreatedAt(row._creationTime)}
-                </TableCell>
-                <TableCell className="text-right">
-                  <div className="inline-flex items-center gap-1">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={`Edit ${row.url}`}
-                      onClick={() => setDialog({ type: "edit", row })}
-                    >
-                      <PencilIcon />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={`Delete ${row.url}`}
-                      onClick={() => setDeleteId(row._id)}
-                    >
-                      <Trash2Icon />
-                    </Button>
-                  </div>
-                </TableCell>
+      <section
+        className="animate-fade-up rounded-lg border border-border/80 bg-card/80 shadow-[0_1px_0_oklch(0.92_0.01_230)] backdrop-blur-sm"
+        style={{ animationDelay: "80ms" }}
+      >
+        {urls.length === 0 ? (
+          <Empty className="border-0 py-20">
+            <EmptyHeader>
+              <EmptyTitle>No URLs yet</EmptyTitle>
+              <EmptyDescription>Add a URL to start building your scrape list.</EmptyDescription>
+            </EmptyHeader>
+            <Button type="button" onClick={() => setDialog({ type: "create" })}>
+              <PlusIcon data-icon="inline-start" />
+              Add URL
+            </Button>
+          </Empty>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="px-4 font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
+                  URL
+                </TableHead>
+                <TableHead className="font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
+                  Created
+                </TableHead>
+                <TableHead className="w-24 px-4 text-right font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
+                  Actions
+                </TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+            </TableHeader>
+            <TableBody>
+              {urls.map((row) => (
+                <TableRow key={row._id} className="hover:bg-accent/40">
+                  <TableCell className="px-4 py-3">
+                    <a
+                      href={row.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-mono text-[13px] text-foreground underline-offset-4 transition-colors hover:text-primary hover:underline"
+                    >
+                      {row.url}
+                    </a>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">
+                    {formatCreatedAt(row._creationTime)}
+                  </TableCell>
+                  <TableCell className="px-4 text-right">
+                    <div className="inline-flex items-center gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={`Edit ${row.url}`}
+                        onClick={() => setDialog({ type: "edit", row })}
+                      >
+                        <PencilIcon />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={`Delete ${row.url}`}
+                        onClick={() => setDeleteId(row._id)}
+                      >
+                        <Trash2Icon />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </section>
 
       <UrlFormDialog
         open={dialog.type !== "closed"}

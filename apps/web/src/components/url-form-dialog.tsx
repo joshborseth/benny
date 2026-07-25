@@ -85,6 +85,7 @@ function UrlFormFields({
                     onChange={(event) => field.handleChange(event.target.value)}
                     aria-invalid={isInvalid}
                     autoFocus
+                    className="font-mono text-[13px]"
                   />
                   {isInvalid && <FieldError errors={field.state.meta.errors} />}
                 </Field>

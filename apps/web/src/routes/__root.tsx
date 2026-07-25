@@ -28,9 +28,10 @@ export const Route = createRootRouteWithContext<{
     ],
   }),
   notFoundComponent: () => (
-    <main className="container mx-auto p-4 pt-16">
-      <h1>404</h1>
-      <p>The requested page could not be found.</p>
+    <main className="mx-auto flex min-h-svh w-full max-w-5xl flex-col gap-2 p-6">
+      <p className="font-mono text-[11px] tracking-[0.2em] text-primary uppercase">Benny</p>
+      <h1 className="font-heading text-2xl font-medium tracking-tight">404</h1>
+      <p className="text-sm text-muted-foreground">The requested page could not be found.</p>
     </main>
   ),
   component: RootComponent,
