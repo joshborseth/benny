@@ -1,0 +1,13 @@
+{
+  "name": "@benny/config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./typescript/base.json": "./typescript/base.json",
+    "./typescript/react.json": "./typescript/react.json",
+    "./typescript/library.json": "./typescript/library.json",
+    "./oxlint/base.json": "./oxlint/base.json",
+    "./oxfmt/base.json": "./oxfmt/base.json"
+  }
+}

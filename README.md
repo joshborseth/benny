@@ -1,21 +1,40 @@
-# shadcn/ui monorepo template
+# Benny
 
-This is a TanStack Start monorepo template with shadcn/ui.
+Bun + Turborepo monorepo with TanStack Start, Convex, and shadcn/ui.
 
-## Adding components
+## Structure
 
-To add components to your app, run the following command at the root of your `web` app:
-
-```bash
-pnpm dlx shadcn@latest add button -c apps/web
+```text
+apps/web              @benny/web — TanStack Start
+packages/ui           @benny/ui — shadcn/ui components
+packages/backend      @benny/backend — Convex functions
+packages/config       @benny/config — shared TS, oxlint, oxfmt
 ```
 
-This will place the ui components in the `packages/ui/src/components` directory.
+## Setup
 
-## Using components
+```bash
+bun install
+bun run setup   # Convex login / project (named benny) + syncs VITE_CONVEX_URL
+bun quality:fix
+bun typecheck
+bun dev
+```
 
-To use the components in your app, import them from the `ui` package.
+## Scripts
+
+| Script                            | Behavior                       |
+| --------------------------------- | ------------------------------ |
+| `bun dev`                         | Web + Convex in parallel       |
+| `bun build`                       | Production build               |
+| `bun lint` / `bun lint:fix`       | oxlint                         |
+| `bun format` / `bun format:fix`   | oxfmt check / write            |
+| `bun quality` / `bun quality:fix` | lint + format together         |
+| `bun typecheck`                   | `tsc --noEmit` across packages |
+| `bun run setup`                   | One-shot Convex init           |
+
+## Importing UI
 
 ```tsx
-import { Button } from "@workspace/ui/components/button";
+import { Button } from "@benny/ui/components/button";
 ```

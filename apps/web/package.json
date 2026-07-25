@@ -1,37 +1,39 @@
 {
-  "name": "web",
+  "name": "@benny/web",
   "version": "0.0.1",
-  "type": "module",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "vite dev --port 3000",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "eslint",
-    "format": "prettier --write \"**/*.{ts,tsx}\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@benny/backend": "workspace:*",
+    "@benny/ui": "workspace:*",
+    "@convex-dev/react-query": "^0.1.0",
     "@tailwindcss/vite": "^4",
     "@tanstack/react-devtools": "latest",
+    "@tanstack/react-query": "^5.101.4",
     "@tanstack/react-router": "latest",
     "@tanstack/react-router-devtools": "latest",
+    "@tanstack/react-router-ssr-query": "^1.167.1",
     "@tanstack/react-start": "latest",
     "@tanstack/router-plugin": "latest",
-    "@workspace/ui": "workspace:*",
+    "convex": "^1.42.3",
     "lucide-react": "^1.26.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "tailwindcss": "^4"
   },
   "devDependencies": {
+    "@benny/config": "workspace:*",
     "@tanstack/devtools-vite": "latest",
-    "@tanstack/eslint-config": "latest",
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6",
-    "eslint": "^9",
     "typescript": "^6",
     "vite": "^8"
   }

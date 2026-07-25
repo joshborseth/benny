@@ -1,0 +1,18 @@
+{
+  "printWidth": 80,
+  "tabWidth": 2,
+  "useTabs": false,
+  "semi": false,
+  "singleQuote": false,
+  "trailingComma": "all",
+  "arrowParens": "always",
+  "ignorePatterns": [
+    "**/node_modules/**",
+    "**/.turbo/**",
+    "**/.output/**",
+    "**/dist/**",
+    "**/routeTree.gen.ts",
+    "**/convex/_generated/**",
+    "**/bun.lock"
+  ]
+}
