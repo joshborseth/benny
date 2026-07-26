@@ -43,7 +43,10 @@ async function processOne(client: ConvexHttpClient, workerSecret: string): Promi
       });
     }
 
-    const outcome = await runScrape({ url: target.url, goal: target.goal }, credentials);
+    const outcome = await runScrape(
+      { targetId: target._id, url: target.url, goal: target.goal },
+      credentials,
+    );
 
     await client.mutation(api.runs.complete, {
       workerSecret,
