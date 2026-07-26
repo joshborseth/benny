@@ -51,17 +51,135 @@ const LOGIN_USERNAME_ACT = "Type %username% into the username or email field";
 const LOGIN_PASSWORD_ACT =
   "Type %password% into the password field, then submit the login form";
 
+/** Common system Chrome/Chromium paths — harder to fingerprint than Playwright Chromium. */
+const SYSTEM_CHROME_CANDIDATES = [
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "/Applications/Chromium.app/Contents/MacOS/Chromium",
+  "/usr/bin/google-chrome-stable",
+  "/usr/bin/google-chrome",
+  "/usr/bin/chromium-browser",
+  "/usr/bin/chromium",
+  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+];
+
 function resolveChromePath(): string | undefined {
-  if (process.env.CHROME_PATH) {
-    return process.env.CHROME_PATH;
+  if (process.env.CHROME_PATH?.trim()) {
+    return process.env.CHROME_PATH.trim();
   }
-  // Prefer Playwright's bundled Chromium so system Chrome isn't required.
+  for (const candidate of SYSTEM_CHROME_CANDIDATES) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  // Fall back to Playwright's bundled Chromium when no system browser is installed.
   try {
     return chromium.executablePath();
   } catch {
     return undefined;
   }
 }
+
+function stealthEnabled(): boolean {
+  return process.env.STAGEHAND_STEALTH !== "false";
+}
+
+function resolveLocale(): string {
+  return process.env.STAGEHAND_LOCALE?.trim() || "en-US";
+}
+
+function resolveViewport(): { width: number; height: number } {
+  const width = Number(process.env.STAGEHAND_VIEWPORT_WIDTH ?? 1440);
+  const height = Number(process.env.STAGEHAND_VIEWPORT_HEIGHT ?? 900);
+  return {
+    width: Number.isFinite(width) && width > 0 ? width : 1440,
+    height: Number.isFinite(height) && height > 0 ? height : 900,
+  };
+}
+
+/** Strip HeadlessChrome from UA — a common bot-detection signal. */
+function resolveUserAgent(headless: boolean): string | undefined {
+  const override = process.env.STAGEHAND_USER_AGENT?.trim();
+  if (override) {
+    return override;
+  }
+  if (!stealthEnabled() || !headless) {
+    return undefined;
+  }
+  const platform =
+    process.platform === "darwin"
+      ? "Macintosh; Intel Mac OS X 10_15_7"
+      : process.platform === "win32"
+        ? "Windows NT 10.0; Win64; x64"
+        : "X11; Linux x86_64";
+  return `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36`;
+}
+
+function resolveProxy():
+  | { server: string; bypass?: string; username?: string; password?: string }
+  | undefined {
+  const server = process.env.STAGEHAND_PROXY_SERVER?.trim();
+  if (!server) {
+    return undefined;
+  }
+  return {
+    server,
+    ...(process.env.STAGEHAND_PROXY_BYPASS?.trim()
+      ? { bypass: process.env.STAGEHAND_PROXY_BYPASS.trim() }
+      : {}),
+    ...(process.env.STAGEHAND_PROXY_USERNAME?.trim()
+      ? { username: process.env.STAGEHAND_PROXY_USERNAME.trim() }
+      : {}),
+    ...(process.env.STAGEHAND_PROXY_PASSWORD
+      ? { password: process.env.STAGEHAND_PROXY_PASSWORD }
+      : {}),
+  };
+}
+
+function buildStealthLaunchArgs(userAgent: string | undefined): string[] {
+  if (!stealthEnabled()) {
+    return userAgent ? [`--user-agent=${userAgent}`] : [];
+  }
+  return [
+    "--disable-blink-features=AutomationControlled",
+    "--disable-infobars",
+    ...(userAgent ? [`--user-agent=${userAgent}`] : []),
+  ];
+}
+
+/**
+ * Hide common automation fingerprints before the first navigation.
+ * Runs at document start on every new document in the page.
+ */
+const STEALTH_INIT_SCRIPT = `(() => {
+  try {
+    Object.defineProperty(Navigator.prototype, "webdriver", {
+      get: () => undefined,
+      configurable: true,
+    });
+  } catch {}
+  try {
+    // Some sites check for window.chrome; headless Chromium often lacks it.
+    if (!window.chrome) {
+      window.chrome = { runtime: {} };
+    }
+  } catch {}
+  try {
+    Object.defineProperty(Navigator.prototype, "languages", {
+      get: () => Object.freeze(["en-US", "en"]),
+      configurable: true,
+    });
+  } catch {}
+  try {
+    Object.defineProperty(Navigator.prototype, "plugins", {
+      get: () => {
+        const fake = { length: 5, item: () => null, namedItem: () => null, refresh: () => {} };
+        return fake;
+      },
+      configurable: true,
+    });
+  } catch {}
+})()`;
 
 function itemKey(item: unknown): string {
   try {
@@ -101,6 +219,11 @@ async function runScrapeAttempt(
   const maxPages = Number(process.env.STAGEHAND_MAX_PAGES ?? 10);
   const navMaxSteps = Number(process.env.STAGEHAND_NAV_MAX_STEPS ?? 6);
   const executablePath = resolveChromePath();
+  const locale = resolveLocale();
+  const viewport = resolveViewport();
+  const userAgent = resolveUserAgent(headless);
+  const proxy = resolveProxy();
+  const stealth = stealthEnabled();
 
   mkdirSync(cacheDir, { recursive: true });
 
@@ -113,13 +236,20 @@ async function runScrapeAttempt(
     verbose: credentials ? 0 : 1,
     localBrowserLaunchOptions: {
       headless,
+      locale,
+      viewport,
+      args: buildStealthLaunchArgs(userAgent),
       ...(executablePath ? { executablePath } : {}),
+      ...(proxy ? { proxy } : {}),
     },
   });
 
   const steps: string[] = [
     `cacheDir=${cacheDir}`,
     `cacheMode=${cacheMode}`,
+    `stealth=${stealth}`,
+    `headless=${headless}`,
+    `chrome=${executablePath ?? "default"}`,
   ];
   const collected: unknown[] = [];
   const seenKeys = new Set<string>();
@@ -133,6 +263,11 @@ async function runScrapeAttempt(
     const page = stagehand.context.pages()[0];
     if (!page) {
       throw new Error("Stagehand did not open a browser page");
+    }
+
+    if (stealth) {
+      await page.addInitScript(STEALTH_INIT_SCRIPT);
+      steps.push("applied stealth init script");
     }
 
     steps.push(`goto ${target.url}`);
@@ -255,6 +390,8 @@ Stay on this site's domain. Do not download files. Do not try to collect or summ
  * Credentials go through Stagehand `variables` (`%name%`) so the LLM never sees secret values.
  *
  * Login/nav actions are cached under cacheDir (selfHeal on). extract() still uses the LLM.
+ * Local anti-detect (STAGEHAND_STEALTH, default on): system Chrome preference, AutomationControlled
+ * disabled, realistic viewport/locale, non-Headless UA when headless, and a document-start init script.
  * On hard failure or an empty incomplete result, clears the cache and retries once.
  */
 export async function runScrape(
