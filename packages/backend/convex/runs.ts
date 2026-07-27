@@ -29,7 +29,12 @@ export const listRecent = query({
 export const get = query({
   args: { id: v.id("runs") },
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.id);
+    const run = await ctx.db.get(args.id);
+    if (!run) {
+      return null;
+    }
+    const target = await ctx.db.get(run.targetId);
+    return { ...run, target };
   },
 });
 

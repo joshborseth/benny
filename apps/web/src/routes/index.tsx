@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { convexQuery } from "@convex-dev/react-query";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
 import { PencilIcon, PlayIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { api } from "@benny/backend/api";
@@ -27,6 +27,7 @@ import {
   TableHeader,
   TableRow,
 } from "@benny/ui/components/table";
+import { RunStatusBadge } from "@/components/run-status-badge";
 import { TargetFormDialog } from "@/components/target-form-dialog";
 import { emptyTargetFormValues, type TargetFormValues } from "@/lib/schemas/target-form";
 
@@ -59,21 +60,10 @@ function CredentialBadge({ targetId }: { targetId: Id<"targets"> }) {
   );
 }
 
-function RunStatusBadge({ status }: { status: Doc<"runs">["status"] }) {
-  const variant =
-    status === "succeeded"
-      ? "default"
-      : status === "failed"
-        ? "destructive"
-        : status === "running"
-          ? "outline"
-          : "secondary";
-  return <Badge variant={variant}>{status}</Badge>;
-}
-
 type DialogState = { type: "closed" } | { type: "create" } | { type: "edit"; row: Doc<"targets"> };
 
 function TargetsPage() {
+  const navigate = useNavigate();
   const { data: targets } = useSuspenseQuery(convexQuery(api.targets.list, {}));
   const { data: runs } = useSuspenseQuery(convexQuery(api.runs.listRecent, {}));
   const removeTarget = useMutation(api.targets.remove);
@@ -254,7 +244,13 @@ function TargetsPage() {
                         ? JSON.stringify(run.result)
                         : run.trace;
                   return (
-                    <TableRow key={run._id} className="hover:bg-accent/40">
+                    <TableRow
+                      key={run._id}
+                      className="cursor-pointer hover:bg-accent/40"
+                      onClick={() =>
+                        void navigate({ to: "/runs/$runId", params: { runId: run._id } })
+                      }
+                    >
                       <TableCell className="px-4 py-3 font-mono text-[13px]">
                         {target?.url ?? String(run.targetId)}
                       </TableCell>
