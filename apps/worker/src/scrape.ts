@@ -1,5 +1,4 @@
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Stagehand } from "@browserbasehq/stagehand";
@@ -7,184 +6,81 @@ import { chromium } from "playwright-core";
 import { z } from "zod";
 import type { SiteCredentials } from "./crypto";
 
-/**
- * Fixed-shape extract schema for LLM structured outputs.
- * Open-ended `z.record(..., z.unknown())` becomes `additionalProperties: {}`, which
- * OpenAI/AI SDK structured output rejects ("response did not match schema").
- */
-const pageExtractSchema = z.object({
-  items: z
+const listingSchema = z.object({
+  opportunities: z
     .array(
       z.object({
-        title: z
+        title: z.string(),
+        url: z
           .string()
-          .describe("Short label/title for this record when available; else empty string"),
-        fields: z
-          .array(
-            z.object({
-              name: z.string().describe("Field name"),
-              value: z.string().describe("Field value as plain text"),
-            }),
-          )
-          .describe("All goal-relevant fields for this record as name/value pairs"),
+          .describe(
+            "Exact href attribute of the <a> wrapping this opportunity — copy character-for-character from the DOM, never invent or build a path from the title; empty string if the row has no link",
+          ),
       }),
     )
-    .describe("Records/data found on this page for the goal"),
-  pageSummary: z.string().describe("Short summary of what was found on this page"),
-  done: z
+    .describe("Every opportunity listed on this page"),
+  hasNextPage: z
     .boolean()
-    .describe(
-      "True when the goal is fully satisfied for its stated scope (not merely when the site has more pages)",
-    ),
-  nextHint: z
+    .describe("True if a pagination control leads to more results"),
+});
+
+const detailSchema = z.object({
+  title: z.string(),
+  description: z.string().describe("Summary or scope of work"),
+  agency: z
+    .string()
+    .describe("Issuing agency or organization; empty string if not shown"),
+  deadline: z
     .string()
     .describe(
-      "One concrete in-scope next navigation when done is false (detail link, next page the goal requires, etc.). Empty string when done is true.",
+      "Due/close date and time exactly as shown; empty string if not shown",
+    ),
+  location: z
+    .string()
+    .describe("Place of performance or region; empty string if not shown"),
+  amount: z
+    .string()
+    .describe(
+      "Contract value or estimated budget as shown; empty string if not shown",
     ),
 });
 
-const scrapeResultSchema = z.object({
-  items: z
-    .array(z.record(z.string(), z.string()))
-    .describe("All records collected across pages"),
-  summary: z.string().describe("Short summary of the overall scrape"),
-  pagesVisited: z.array(z.string()).describe("URLs visited during the scrape"),
-  incomplete: z
-    .boolean()
-    .describe("True if stopped due to budget or stuck navigation rather than done"),
-});
+const LISTING_INSTRUCTION =
+  `List every RFP / bid / solicitation / contracting opportunity on the CURRENT page. ` +
+  `For url, copy the exact href attribute of that row's detail link from the DOM — never invent, guess, or construct a URL from the title or other text. ` +
+  `If a row has no <a href>, set url to "". Do not invent rows. ` +
+  `Set hasNextPage true only if a pagination control leads to more results.`;
 
-type PageExtractItem = z.infer<typeof pageExtractSchema>["items"][number];
-
-type PageEvidence = {
-  title: string;
-  text: string;
-  normalized: string;
-  compact: string;
-};
-
-const BLOCK_PATTERNS = [
-  /\b403\b/i,
-  /\bforbidden\b/i,
-  /\baccess denied\b/i,
-  /\bjust a moment\b/i,
-  /\battention required\b/i,
-  /\bcf-browser-verification\b/i,
-  /\bcaptcha\b/i,
-  /\bverify you are human\b/i,
-  /\benable javascript and cookies\b/i,
-];
-
-/** Flatten LLM extract rows into plain string maps for storage/display. */
-function normalizeExtractItem(item: PageExtractItem): Record<string, string> {
-  const record: Record<string, string> = {};
-  const title = item.title.trim();
-  if (title) {
-    record.title = title;
-  }
-  for (const field of item.fields) {
-    const name = field.name.trim();
-    if (!name) continue;
-    record[name] = field.value;
-  }
-  return record;
-}
-
-function normalizeForMatch(value: string): string {
-  return value.toLowerCase().replace(/\s+/g, " ").trim();
-}
-
-function compactForMatch(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
-}
-
-function isPlaywrightChromium(executablePath: string | undefined): boolean {
-  if (!executablePath) return false;
-  return (
-    executablePath.includes("ms-playwright") ||
-    executablePath.includes("Chrome for Testing")
-  );
-}
-
-function detectBlockedPage(evidence: PageEvidence): string | null {
-  const haystack = `${evidence.title}\n${evidence.text}`;
-  for (const pattern of BLOCK_PATTERNS) {
-    if (pattern.test(haystack)) {
-      return `page looks blocked (${pattern.source})`;
-    }
-  }
-  if (evidence.compact.length < 80) {
-    return "page text too sparse to scrape (likely blocked, still loading, or empty)";
-  }
-  return null;
-}
-
-function valueAppearsOnPage(value: string, evidence: PageEvidence): boolean {
-  const normalized = normalizeForMatch(value);
-  if (normalized.length < 4) return false;
-  if (evidence.normalized.includes(normalized)) return true;
-  const compact = compactForMatch(value);
-  // Require a longer compact fingerprint so short tokens don't false-match.
-  return compact.length >= 8 && evidence.compact.includes(compact);
-}
-
-/**
- * Keep only records whose values are literally grounded in page text.
- * Invented titles like "RFP Title 1" fail this check.
- */
-function groundExtractedItems(
-  items: PageExtractItem[],
-  evidence: PageEvidence,
-): { kept: Record<string, string>[]; rejected: number } {
-  const kept: Record<string, string>[] = [];
-  let rejected = 0;
-
-  for (const raw of items) {
-    const item = normalizeExtractItem(raw);
-    const values = Object.values(item).map((v) => v.trim()).filter(Boolean);
-    if (values.length === 0) {
-      rejected += 1;
-      continue;
-    }
-
-    const substantive = values.filter((v) => normalizeForMatch(v).length >= 4);
-    if (substantive.length === 0) {
-      rejected += 1;
-      continue;
-    }
-
-    const groundedCount = substantive.filter((v) =>
-      valueAppearsOnPage(v, evidence),
-    ).length;
-    // Require every substantive value (or at least the title + majority) on-page.
-    const title = item.title?.trim();
-    const titleOk = !title || title.length < 4 || valueAppearsOnPage(title, evidence);
-    const groundedRatio = groundedCount / substantive.length;
-    if (!titleOk || groundedRatio < 0.75) {
-      rejected += 1;
-      continue;
-    }
-
-    kept.push(item);
-  }
-
-  return { kept, rejected };
-}
+const DETAIL_INSTRUCTION =
+  `This page describes a single RFP / bid / solicitation. Extract its details, copying values exactly as shown. ` +
+  `Use an empty string for anything not present. Do not guess. ` +
+  `If this is an error, 404, login, or otherwise not an opportunity detail page, set title to "" and put a short explanation in description.`;
 
 export type ScrapeTarget = {
   targetId: string;
   url: string;
-  goal: string;
+};
+
+export type Opportunity = {
+  title: string;
+  url?: string;
+  description?: string;
+  agency?: string;
+  deadline?: string;
+  location?: string;
+  amount?: string;
 };
 
 export type ScrapeOutcome = {
-  result: z.infer<typeof scrapeResultSchema>;
+  opportunityCount: number;
+  listingPages: string[];
   trace: string;
 };
 
-type CacheMode = "hit" | "miss" | "repaired";
-
-const workerDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const workerDir = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
 
 /** Stable login act instructions so Stagehand cache keys match across runs. */
 const LOGIN_USERNAME_ACT = "Type %username% into the username or email field";
@@ -218,6 +114,14 @@ function resolveChromePath(): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function isPlaywrightChromium(executablePath: string | undefined): boolean {
+  if (!executablePath) return false;
+  return (
+    executablePath.includes("ms-playwright") ||
+    executablePath.includes("Chrome for Testing")
+  );
 }
 
 function stealthEnabled(): boolean {
@@ -321,43 +225,20 @@ const STEALTH_INIT_SCRIPT = `(() => {
   } catch {}
 })()`;
 
-function itemKey(item: unknown): string {
-  try {
-    return JSON.stringify(item);
-  } catch {
-    return String(item);
-  }
-}
-
-function resolveCacheDir(target: ScrapeTarget): string {
-  const base =
-    process.env.STAGEHAND_CACHE_DIR?.trim() ||
-    path.join(workerDir, ".stagehand-cache");
-  const configHash = createHash("sha256")
-    .update(`${target.url}\n${target.goal}`)
-    .digest("hex")
-    .slice(0, 16);
-  return path.join(base, "targets", target.targetId, configHash);
-}
-
-function clearCacheDir(cacheDir: string): void {
-  rmSync(cacheDir, { recursive: true, force: true });
-}
-
-function isUselessOutcome(outcome: ScrapeOutcome): boolean {
-  return outcome.result.incomplete && outcome.result.items.length === 0;
-}
-
 type BrowserPage = {
   url: () => string;
-  title: () => Promise<string>;
   goto: (
     url: string,
     options?: { waitUntil?: "load" | "domcontentloaded" | "networkidle" },
   ) => Promise<unknown>;
   addInitScript: (script: string) => Promise<void>;
-  evaluate: <R = unknown>(pageFunctionOrExpression: string | (() => R | Promise<R>)) => Promise<R>;
-  waitForLoadState: (state: "load" | "domcontentloaded" | "networkidle", timeoutMs?: number) => Promise<void>;
+  evaluate: <R = unknown>(
+    pageFunctionOrExpression: string | (() => R | Promise<R>),
+  ) => Promise<R>;
+  waitForLoadState: (
+    state: "load" | "domcontentloaded" | "networkidle",
+    timeoutMs?: number,
+  ) => Promise<void>;
   locator: (selector: string) => {
     first: () => {
       isVisible: (options?: { timeout?: number }) => Promise<boolean>;
@@ -366,43 +247,25 @@ type BrowserPage = {
   };
 };
 
-async function readPageEvidence(page: BrowserPage): Promise<PageEvidence> {
-  const title = await page.title().catch(() => "");
-  const text = await page
-    .evaluate(() => {
-      const body = document.body;
-      return body ? body.innerText || body.textContent || "" : "";
-    })
-    .catch(() => "");
-  const normalized = normalizeForMatch(`${title}\n${text}`);
-  return {
-    title,
-    text,
-    normalized,
-    compact: compactForMatch(normalized),
-  };
-}
+const COOKIE_LABELS = [
+  "Allow all cookies",
+  "Accept all cookies",
+  "Accept All",
+  "Accept",
+  "I agree",
+];
 
-async function settlePage(page: BrowserPage, steps: string[]): Promise<PageEvidence> {
+/** Wait for content, dismiss cookie banners, and scroll so lazy rows enter the DOM. */
+async function settlePage(page: BrowserPage): Promise<void> {
   await page.waitForLoadState("domcontentloaded").catch(() => undefined);
   await page.waitForLoadState("networkidle", 15_000).catch(() => undefined);
-  // Give SPAs / cookie banners a beat to paint.
-  await new Promise((resolve) => setTimeout(resolve, 1500));
+  await new Promise((resolve) => setTimeout(resolve, 1000));
 
-  // Best-effort cookie banner dismiss — no LLM.
-  const cookieLabels = [
-    "Allow all cookies",
-    "Accept all cookies",
-    "Accept All",
-    "Accept",
-    "I agree",
-  ];
-  for (const label of cookieLabels) {
+  for (const label of COOKIE_LABELS) {
     try {
       const button = page.locator(`button:has-text("${label}")`).first();
       if (await button.isVisible({ timeout: 500 })) {
         await button.click({ timeout: 2000 });
-        steps.push(`dismissed cookie banner via "${label}"`);
         await new Promise((resolve) => setTimeout(resolve, 800));
         break;
       }
@@ -411,7 +274,6 @@ async function settlePage(page: BrowserPage, steps: string[]): Promise<PageEvide
     }
   }
 
-  // Scroll so lazy/virtualized rows enter the DOM before we snapshot/extract.
   for (let i = 0; i < 6; i++) {
     await page
       .evaluate(() => {
@@ -426,42 +288,166 @@ async function settlePage(page: BrowserPage, steps: string[]): Promise<PageEvide
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
   await page.evaluate(() => window.scrollTo(0, 0)).catch(() => undefined);
+}
 
-  let evidence = await readPageEvidence(page);
-  if (evidence.compact.length < 80) {
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    evidence = await readPageEvidence(page);
+function resolveCacheDir(target: ScrapeTarget): string {
+  const base =
+    process.env.STAGEHAND_CACHE_DIR?.trim() ||
+    path.join(workerDir, ".stagehand-cache");
+  return path.join(base, "targets", target.targetId);
+}
+
+type PageLink = { href: string; text: string };
+
+/** Same-origin anchors with a real href — used to reject invented listing URLs. */
+async function collectPageLinks(page: BrowserPage): Promise<PageLink[]> {
+  return page.evaluate(() => {
+    const origin = window.location.origin;
+    const out: { href: string; text: string }[] = [];
+    const seen = new Set<string>();
+    for (const anchor of document.querySelectorAll("a[href]")) {
+      const raw = anchor.getAttribute("href")?.trim() ?? "";
+      if (
+        !raw ||
+        raw.startsWith("#") ||
+        raw.toLowerCase().startsWith("javascript:")
+      ) {
+        continue;
+      }
+      let href: string;
+      try {
+        href = new URL(raw, window.location.href).toString();
+      } catch {
+        continue;
+      }
+      if (!href.startsWith(origin)) continue;
+      if (seen.has(href)) continue;
+      seen.add(href);
+      out.push({
+        href,
+        text: (anchor.textContent ?? "").replace(/\s+/g, " ").trim(),
+      });
+    }
+    return out;
+  });
+}
+
+function normalizeMatchText(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function hrefSet(links: PageLink[]): Set<string> {
+  return new Set(links.map((link) => link.href));
+}
+
+/**
+ * Accept a listing URL only when it appears as a real <a href> on the page.
+ * If the model invented a path, fall back to matching the opportunity title against link text.
+ */
+function resolveVerifiedUrl(
+  title: string,
+  claimedUrl: string | undefined,
+  pageLinks: PageLink[],
+): string | undefined {
+  const hrefs = hrefSet(pageLinks);
+  if (claimedUrl && hrefs.has(claimedUrl)) {
+    return claimedUrl;
   }
-  steps.push(
-    `page evidence: title=${JSON.stringify(evidence.title)} chars=${evidence.text.length}`,
-  );
-  return evidence;
+
+  const titleNorm = normalizeMatchText(title);
+  if (!titleNorm || titleNorm.length < 4) return undefined;
+
+  let best: { href: string; score: number } | undefined;
+  for (const link of pageLinks) {
+    const text = normalizeMatchText(link.text);
+    if (!text || text.length < 4) continue;
+    // Skip obvious chrome (pagination, filters, nav) — opportunity links carry the title.
+    if (
+      text.length < titleNorm.length * 0.4 &&
+      !text.includes(titleNorm.slice(0, 24))
+    ) {
+      continue;
+    }
+    if (
+      text.includes(titleNorm) ||
+      titleNorm.includes(text.slice(0, Math.min(text.length, 60)))
+    ) {
+      const score = Math.min(text.length, titleNorm.length);
+      if (!best || score > best.score) {
+        best = { href: link.href, score };
+      }
+    }
+  }
+  return best?.href;
 }
 
-function itemTitle(item: Record<string, string>): string {
-  return (item.title ?? Object.values(item)[0] ?? "").trim();
+function absoluteUrl(href: string, base: string): string | undefined {
+  const trimmed = href.trim();
+  if (!trimmed) return undefined;
+  try {
+    return new URL(trimmed, base).toString();
+  } catch {
+    return undefined;
+  }
 }
 
-async function runScrapeAttempt(
+function optional(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.toLowerCase() === "null") return undefined;
+  return trimmed;
+}
+
+/** Drop 404 / empty / placeholder detail extractions from bad URLs. */
+function isUsableDetail(detail: z.infer<typeof detailSchema>): boolean {
+  const title = optional(detail.title);
+  if (!title) return false;
+  const lower = title.toLowerCase();
+  if (lower.includes("error 404") || lower === "404" || lower === "not found") {
+    return false;
+  }
+  const description = (detail.description ?? "").toLowerCase();
+  if (
+    description.includes("cannot be found") ||
+    description.includes("page not found") ||
+    description.includes("page you've requested cannot be found")
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Scrape every RFP/opportunity from a site: paginate the listing to collect links,
+ * then open each one and extract its full record.
+ *
+ * Runs a self-hosted Stagehand session (LOCAL, no Browserbase). Credentials go through
+ * Stagehand `variables` (`%name%`) so the LLM never sees secret values, and login actions
+ * are cached under cacheDir with selfHeal on.
+ *
+ * Local anti-detect (STAGEHAND_STEALTH, default on): system Chrome preference,
+ * AutomationControlled disabled, realistic viewport/locale, non-Headless UA when headless,
+ * and a document-start init script.
+ *
+ * `onOpportunity` is awaited per record so a run that dies partway still persists its work.
+ * `onTrace` is awaited after each step so the UI can show live progress.
+ */
+export async function runScrape(
   target: ScrapeTarget,
   credentials: SiteCredentials | null,
-  cacheDir: string,
-  cacheMode: CacheMode,
+  onOpportunity: (opportunity: Opportunity) => Promise<void>,
+  onTrace?: (trace: string) => Promise<void>,
 ): Promise<ScrapeOutcome> {
   const model = process.env.STAGEHAND_MODEL ?? "openai/gpt-4o-mini";
   const headless = process.env.STAGEHAND_HEADLESS !== "false";
-  const maxPages = Number(process.env.STAGEHAND_MAX_PAGES ?? 10);
-  const navMaxSteps = Number(process.env.STAGEHAND_NAV_MAX_STEPS ?? 6);
-  const maxExtractPasses = Math.max(
-    1,
-    Number(process.env.STAGEHAND_EXTRACT_PASSES ?? 5),
+  const maxPages = Number(process.env.STAGEHAND_MAX_PAGES ?? 1);
+  const maxOpportunities = Number(
+    process.env.STAGEHAND_MAX_OPPORTUNITIES ?? 200,
   );
   const executablePath = resolveChromePath();
-  const locale = resolveLocale();
-  const viewport = resolveViewport();
   const userAgent = resolveUserAgent(headless);
   const proxy = resolveProxy();
   const stealth = stealthEnabled();
+  const cacheDir = resolveCacheDir(target);
 
   mkdirSync(cacheDir, { recursive: true });
 
@@ -474,33 +460,32 @@ async function runScrapeAttempt(
     verbose: credentials ? 0 : 1,
     localBrowserLaunchOptions: {
       headless,
-      locale,
-      viewport,
+      locale: resolveLocale(),
+      viewport: resolveViewport(),
       args: buildStealthLaunchArgs(userAgent),
       ...(executablePath ? { executablePath } : {}),
       ...(proxy ? { proxy } : {}),
     },
   });
 
-  const steps: string[] = [
-    `cacheDir=${cacheDir}`,
-    `cacheMode=${cacheMode}`,
-    `stealth=${stealth}`,
-    `headless=${headless}`,
-    `chrome=${executablePath ?? "default"}`,
-  ];
-  const collected: Record<string, string>[] = [];
-  const seenKeys = new Set<string>();
-  const pagesVisited: string[] = [];
-  const pageSummaries: string[] = [];
-  let incomplete = false;
-  let stopReason = "done";
+  const steps: string[] = [];
+  const pushStep = async (line: string) => {
+    steps.push(line);
+    await onTrace?.(steps.join("\n"));
+  };
 
+  await pushStep(`stealth=${stealth}`);
+  await pushStep(`headless=${headless}`);
+  await pushStep(`chrome=${executablePath ?? "default"}`);
   if (isPlaywrightChromium(executablePath)) {
-    steps.push(
+    await pushStep(
       "warning: using Playwright Chrome for Testing — many sites block this; install Google Chrome or set CHROME_PATH",
     );
   }
+
+  const listingPages: string[] = [];
+  const links = new Map<string, { title: string; url?: string }>();
+  let opportunityCount = 0;
 
   try {
     await stagehand.init();
@@ -511,14 +496,12 @@ async function runScrapeAttempt(
 
     if (stealth) {
       await page.addInitScript(STEALTH_INIT_SCRIPT);
-      steps.push("applied stealth init script");
     }
 
-    steps.push(`goto ${target.url}`);
+    await pushStep(`goto ${target.url}`);
     await page.goto(target.url, { waitUntil: "domcontentloaded" });
 
     if (credentials) {
-      steps.push("login with stored credentials");
       // `%username%` / `%password%` are substituted locally after the model chooses actions;
       // values in `variables` are not sent to the LLM provider.
       await stagehand.act(LOGIN_USERNAME_ACT, {
@@ -527,226 +510,114 @@ async function runScrapeAttempt(
       await stagehand.act(LOGIN_PASSWORD_ACT, {
         variables: { password: credentials.password },
       });
-      steps.push("login actions completed");
+      await pushStep("logged in with stored credentials");
     }
 
-    const agent = stagehand.agent();
-
-    for (let visit = 0; visit < maxPages; visit++) {
+    for (let pageNumber = 1; pageNumber <= maxPages; pageNumber++) {
       const currentUrl = page.url();
-      pagesVisited.push(currentUrl);
-      steps.push(`visit ${visit + 1}/${maxPages}: ${currentUrl}`);
+      listingPages.push(currentUrl);
+      await settlePage(page);
 
-      const evidence = await settlePage(page, steps);
-      const blocked = detectBlockedPage(evidence);
-      if (blocked) {
-        throw new Error(
-          `${blocked} at ${currentUrl}. Refusing to extract invented data. Try STAGEHAND_HEADLESS=false, install Google Chrome / set CHROME_PATH, or provide credentials if required.`,
-        );
-      }
-
-      // Models often return a partial list and set done=true. Re-extract on this page
-      // until a pass adds nothing new (or we hit the pass budget).
-      let pageDone = false;
-      let nextHint = "";
-      const pageTitles: string[] = [];
-
-      for (let pass = 1; pass <= maxExtractPasses; pass++) {
-        const alreadyList =
-          pageTitles.length > 0
-            ? `Already extracted from this page (do NOT repeat these):\n${pageTitles
-                .map((t) => `- ${t}`)
-                .join("\n")}\n\nExtract ONLY remaining goal-relevant records still visible on this page.`
-            : `Extract EVERY goal-relevant record visible on this page. Do not stop early — if the page shows 20+ listings, return all of them in this response (or as many as fit; later passes will collect the rest).`;
-
-        const extracted = await stagehand.extract(
-          `Goal: ${target.goal}
-
-Extract data for that goal from the CURRENT page ONLY.
-
-${alreadyList}
-
-CRITICAL — never invent, guess, or use placeholder/example data:
-- Every title and field value MUST be copied from text visible on this page.
-- If no remaining relevant data is visible, return items: [] and explain what the page actually shows in pageSummary.
-- Do not fabricate titles like "RFP Title 1", sample dates, or dollar amounts.
-
-Return each real record with a title (if any) and flat name/value fields — stringify dates, amounts, and lists as text exactly as shown.
-
-Decide done/nextHint from the GOAL'S SCOPE after considering the whole page (not just this partial batch):
-- If the goal still needs other in-scope pages (detail links for items on this page, or pagination the goal asks for), set done to false and put one concrete next navigation hint in nextHint.
-- If the goal is fully satisfied once this page's in-scope records are collected (e.g. "first page only" listing scrape), set done to true and nextHint to "".
-- Do not paginate or open links that are outside the goal.`,
-          pageExtractSchema,
-        );
-
-        const { kept, rejected } = groundExtractedItems(extracted.items, evidence);
-        if (rejected > 0) {
-          steps.push(
-            `pass ${pass}: grounding rejected ${rejected}/${extracted.items.length} invented or ungrounded item(s)`,
-          );
+      const listing = await stagehand.extract(
+        LISTING_INSTRUCTION,
+        listingSchema,
+      );
+      const pageLinks = await collectPageLinks(page);
+      let verified = 0;
+      let rejected = 0;
+      for (const row of listing.opportunities) {
+        const title = row.title.trim();
+        if (!title) continue;
+        const claimed = absoluteUrl(row.url, currentUrl);
+        const url = resolveVerifiedUrl(title, claimed, pageLinks);
+        if (claimed && !url) {
+          rejected += 1;
         }
-        if (extracted.items.length > 0 && kept.length === 0) {
-          throw new Error(
-            `extract returned ${extracted.items.length} item(s) but none appear on the page — refusing hallucinated data`,
-          );
+        if (!url) {
+          // No real detail link on the page — skip rather than storing a title with a fake URL.
+          continue;
         }
-
-        let newCount = 0;
-        for (const item of kept) {
-          const key = itemKey(item);
-          if (seenKeys.has(key)) continue;
-          seenKeys.add(key);
-          collected.push(item);
-          const title = itemTitle(item);
-          if (title) pageTitles.push(title);
-          newCount += 1;
-        }
-
-        pageDone = extracted.done;
-        nextHint = extracted.nextHint.trim();
-        pageSummaries.push(extracted.pageSummary);
-        steps.push(
-          `pass ${pass}/${maxExtractPasses}: ${kept.length} grounded, ${newCount} new (total ${collected.length}) — ${extracted.pageSummary}`,
-        );
-
-        if (newCount === 0) {
-          steps.push(`pass ${pass}: no new grounded items; page extract complete`);
-          break;
-        }
-        if (pass === maxExtractPasses) {
-          steps.push(`pass budget reached (${maxExtractPasses}) for this page`);
+        if (!links.has(url)) {
+          links.set(url, { title, url });
+          verified += 1;
         }
       }
-
-      if (pageDone) {
-        stopReason = "extract signaled done";
-        steps.push(`stop: ${stopReason}`);
-        break;
-      }
-
-      if (visit === maxPages - 1) {
-        incomplete = true;
-        stopReason = `page budget reached (${maxPages})`;
-        steps.push(`stop: ${stopReason}`);
-        break;
-      }
-
-      const navHint = nextHint || "the next page with more data for the goal";
-      steps.push(`navigate: ${navHint}`);
-
-      const beforeUrl = page.url();
-      // Keep the instruction template stable; dynamic hint/visited list are necessary for nav.
-      const agentResult = await agent.execute({
-        instruction: `Navigate once toward unfinished work for this goal: ${target.goal}
-
-Hint: ${navHint}
-Already visited: ${pagesVisited.join(", ")}
-
-Stay on this site's domain. Do not download files. Do not collect or summarize data — only navigate.
-Respect the goal's scope (e.g. if the goal is first-page only, open in-scope detail links from that page, but do not advance list pagination).
-Call done if nothing in-scope remains to visit.`,
-        maxSteps: navMaxSteps,
-      });
-
-      if (agentResult.message) {
-        steps.push(`nav message: ${agentResult.message}`);
-      }
-
-      const afterUrl = page.url();
-      if (afterUrl === beforeUrl) {
-        incomplete = true;
-        stopReason = "navigation did not change URL";
-        steps.push(`stop: ${stopReason}`);
-        break;
-      }
-
-      if (pagesVisited.includes(afterUrl)) {
-        incomplete = true;
-        stopReason = `revisited URL after nav: ${afterUrl}`;
-        steps.push(`stop: ${stopReason}`);
-        break;
-      }
-
-      steps.push(`navigated to ${afterUrl}`);
-    }
-
-    const summary =
-      pageSummaries.length > 0
-        ? `Collected ${collected.length} item(s) across ${pagesVisited.length} page(s). ${pageSummaries.join(" ")}`
-        : `Collected ${collected.length} item(s) across ${pagesVisited.length} page(s).`;
-
-    steps.push(`finished: ${stopReason}; incomplete=${incomplete}; items=${collected.length}`);
-
-    return {
-      result: {
-        items: collected,
-        summary,
-        pagesVisited,
-        incomplete,
-      },
-      trace: steps.join("\n"),
-    };
-  } finally {
-    await stagehand.close().catch(() => undefined);
-  }
-}
-
-/**
- * Run a self-hosted Stagehand session (LOCAL, no Browserbase).
- * Credentials go through Stagehand `variables` (`%name%`) so the LLM never sees secret values.
- *
- * Login/nav actions are cached under cacheDir (selfHeal on). extract() still uses the LLM.
- * Local anti-detect (STAGEHAND_STEALTH, default on): system Chrome preference, AutomationControlled
- * disabled, realistic viewport/locale, non-Headless UA when headless, and a document-start init script.
- * Extractions are grounded against visible page text — invented values are dropped; all-invented
- * or blocked pages fail the run instead of storing fake data.
- * On hard failure or an empty incomplete result, clears the cache and retries once.
- */
-export async function runScrape(
-  target: ScrapeTarget,
-  credentials: SiteCredentials | null,
-): Promise<ScrapeOutcome> {
-  const cacheDir = resolveCacheDir(target);
-  const cacheExisted = existsSync(cacheDir);
-  let repaired = false;
-
-  while (true) {
-    const cacheMode: CacheMode = repaired
-      ? "repaired"
-      : cacheExisted
-        ? "hit"
-        : "miss";
-
-    try {
-      const outcome = await runScrapeAttempt(
-        target,
-        credentials,
-        cacheDir,
-        cacheMode,
+      await pushStep(
+        `listing page ${pageNumber}: ${listing.opportunities.length} row(s), ${verified} verified link(s), ${rejected} invented URL(s) rejected, ${links.size} unique so far — ${currentUrl}`,
       );
 
-      if (isUselessOutcome(outcome) && !repaired) {
-        clearCacheDir(cacheDir);
-        repaired = true;
-        console.warn(
-          `[scrape] cache useless for ${target.targetId}; cleared cache, re-exploring`,
+      if (!listing.hasNextPage) {
+        await pushStep("listing complete: no next page");
+        break;
+      }
+      if (pageNumber === maxPages) {
+        await pushStep(`listing stopped: page budget reached (${maxPages})`);
+        break;
+      }
+
+      await stagehand.act(
+        "Click the pagination control for the next page of results",
+      );
+      await settlePage(page);
+      if (page.url() === currentUrl) {
+        await pushStep("listing stopped: pagination did not change the URL");
+        break;
+      }
+    }
+
+    const collected = [...links.values()].slice(0, maxOpportunities);
+    if (links.size > collected.length) {
+      await pushStep(
+        `opportunity budget reached: scraping ${collected.length} of ${links.size} (STAGEHAND_MAX_OPPORTUNITIES)`,
+      );
+    }
+
+    for (const [index, row] of collected.entries()) {
+      if (!row.url) {
+        await pushStep(
+          `detail ${index + 1}/${collected.length}: skipped (no verified link for "${row.title}")`,
         );
         continue;
       }
 
-      return outcome;
-    } catch (error) {
-      if (!repaired) {
-        clearCacheDir(cacheDir);
-        repaired = true;
-        const message = error instanceof Error ? error.message : String(error);
-        console.warn(
-          `[scrape] attempt failed for ${target.targetId} (${message}); cleared cache, re-exploring`,
+      try {
+        await page.goto(row.url, { waitUntil: "domcontentloaded" });
+        await settlePage(page);
+        const detail = await stagehand.extract(
+          DETAIL_INSTRUCTION,
+          detailSchema,
         );
-        continue;
+        if (!isUsableDetail(detail)) {
+          await pushStep(
+            `detail ${index + 1}/${collected.length}: skipped junk/404 page (${row.url})`,
+          );
+          continue;
+        }
+        await onOpportunity({
+          title: optional(detail.title) ?? row.title,
+          url: row.url,
+          description: optional(detail.description),
+          agency: optional(detail.agency),
+          deadline: optional(detail.deadline),
+          location: optional(detail.location),
+          amount: optional(detail.amount),
+        });
+        opportunityCount += 1;
+        await pushStep(`detail ${index + 1}/${collected.length}: ${row.url}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await pushStep(
+          `detail ${index + 1}/${collected.length} failed (${row.url}): ${message}`,
+        );
       }
-      throw error;
     }
+
+    await pushStep(
+      `finished: ${opportunityCount} opportunit(ies) from ${listingPages.length} listing page(s)`,
+    );
+
+    return { opportunityCount, listingPages, trace: steps.join("\n") };
+  } finally {
+    await stagehand.close().catch(() => undefined);
   }
 }

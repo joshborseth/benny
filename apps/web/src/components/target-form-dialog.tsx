@@ -21,7 +21,6 @@ import {
 } from "@benny/ui/components/field";
 import { Input } from "@benny/ui/components/input";
 import { Switch } from "@benny/ui/components/switch";
-import { Textarea } from "@benny/ui/components/textarea";
 import {
   emptyTargetFormValues,
   targetFormSchema,
@@ -59,16 +58,15 @@ function TargetFormFields({
     },
     onSubmit: async ({ value }) => {
       const url = value.url.trim();
-      const goal = value.goal.trim();
       const { enabled } = value;
       const username = value.username.trim();
       const password = value.password;
 
       let id = targetId;
       if (mode === "edit" && targetId) {
-        await updateTarget({ id: targetId, url, goal, enabled });
+        await updateTarget({ id: targetId, url, enabled });
       } else {
-        id = await createTarget({ url, goal, enabled });
+        id = await createTarget({ url, enabled });
       }
 
       if (id && username && password) {
@@ -108,30 +106,6 @@ function TargetFormFields({
                     autoFocus
                     className="font-mono text-[13px]"
                   />
-                  {isInvalid && <FieldError errors={field.state.meta.errors} />}
-                </Field>
-              );
-            }}
-          </form.Field>
-          <form.Field name="goal">
-            {(field) => {
-              const isInvalid = field.state.meta.isTouched && !field.state.meta.isValid;
-              return (
-                <Field data-invalid={isInvalid || undefined}>
-                  <FieldLabel htmlFor={field.name}>Scrape goal</FieldLabel>
-                  <Textarea
-                    id={field.name}
-                    name={field.name}
-                    placeholder="Log in, open account statements, extract recent balances as JSON."
-                    value={field.state.value}
-                    onBlur={field.handleBlur}
-                    onChange={(event) => field.handleChange(event.target.value)}
-                    aria-invalid={isInvalid}
-                    rows={3}
-                  />
-                  <FieldDescription>
-                    Natural-language instructions for the AI browser agent.
-                  </FieldDescription>
                   {isInvalid && <FieldError errors={field.state.meta.errors} />}
                 </Field>
               );
@@ -233,7 +207,7 @@ export function TargetFormDialog({
           <DialogDescription>
             {mode === "edit"
               ? "Update this scrape target and optional login credentials."
-              : "Add a URL, goal, and optional credentials for the AI browser agent."}
+              : "Add a URL and optional credentials for the AI browser agent."}
           </DialogDescription>
         </DialogHeader>
 

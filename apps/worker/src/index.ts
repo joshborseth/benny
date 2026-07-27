@@ -44,18 +44,32 @@ async function processOne(client: ConvexHttpClient, workerSecret: string): Promi
     }
 
     const outcome = await runScrape(
-      { targetId: target._id, url: target.url, goal: target.goal },
+      { targetId: target._id, url: target.url },
       credentials,
+      async (opportunity) => {
+        await client.mutation(api.opportunities.insert, {
+          workerSecret,
+          runId,
+          targetId: target._id,
+          ...opportunity,
+        });
+      },
+      async (trace) => {
+        await client.mutation(api.runs.setTrace, {
+          workerSecret,
+          runId,
+          trace,
+        });
+      },
     );
 
     await client.mutation(api.runs.complete, {
       workerSecret,
       runId,
       status: "succeeded",
-      result: outcome.result,
       trace: outcome.trace,
     });
-    console.log(`[worker] run ${runId} succeeded`);
+    console.log(`[worker] run ${runId} succeeded — ${outcome.opportunityCount} opportunit(ies)`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[worker] run ${runId} failed:`, message);

@@ -42,10 +42,10 @@ Env lives in a single root `.env.local` (see `.env.example`). Vite, Convex, and 
 
 ## Scraping flow
 
-1. Add a **target** (URL + natural-language goal + optional username/password).
+1. Add a **target** (URL + optional username/password).
 2. Credentials are encrypted with AES-256-GCM before storage.
 3. Click **play** to enqueue a run.
-4. The worker claims pending runs, logs in with Stagehand (`env: "LOCAL"`), follows the goal, and writes JSON results back to Convex.
+4. The worker claims pending runs and logs in with Stagehand (`env: "LOCAL"`), paginates the listing to collect every RFP/opportunity link, then opens each one and writes it to the `opportunities` table as it goes.
 
 No Browserbase — Chromium runs on the worker host (local or Azure container).
 

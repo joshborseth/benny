@@ -1,18 +1,33 @@
+import { useMemo } from "react";
 import { convexQuery } from "@convex-dev/react-query";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon } from "lucide-react";
 import { api } from "@benny/backend/api";
 import type { Id } from "@benny/backend/dataModel";
 import { Button } from "@benny/ui/components/button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@benny/ui/components/table";
 import { RunStatusBadge } from "@/components/run-status-badge";
+import { useEnterAnimation } from "@/hooks/use-enter-animation";
 
 export const Route = createFileRoute("/runs/$runId")({
   component: RunDetailPage,
   loader: async ({ context, params }) => {
-    await context.queryClient.ensureQueryData(
-      convexQuery(api.runs.get, { id: params.runId as Id<"runs"> }),
-    );
+    await Promise.all([
+      context.queryClient.ensureQueryData(
+        convexQuery(api.runs.get, { id: params.runId as Id<"runs"> }),
+      ),
+      context.queryClient.ensureQueryData(
+        convexQuery(api.opportunities.listByRun, { runId: params.runId as Id<"runs"> }),
+      ),
+    ]);
   },
 });
 
@@ -27,10 +42,31 @@ function formatTimestamp(timestamp: number | undefined) {
 }
 
 function RunDetailPage() {
+  const navigate = useNavigate();
   const { runId } = Route.useParams();
-  const { data: run } = useSuspenseQuery(
-    convexQuery(api.runs.get, { id: runId as Id<"runs"> }),
+  const { data: run } = useSuspenseQuery(convexQuery(api.runs.get, { id: runId as Id<"runs"> }));
+  const { data: opportunities } = useSuspenseQuery(
+    convexQuery(api.opportunities.listByRun, { runId: runId as Id<"runs"> }),
   );
+
+  const opportunityIds = useMemo(
+    () => opportunities.map((opportunity) => opportunity._id),
+    [opportunities],
+  );
+  const isNewOpportunity = useEnterAnimation(opportunityIds, runId);
+
+  const traceLines = useMemo(
+    () => (run?.trace ? run.trace.split("\n") : []),
+    [run?.trace],
+  );
+  const traceLineKeys = useMemo(
+    () => traceLines.map((_, index) => String(index)),
+    [traceLines],
+  );
+  const isNewTraceLine = useEnterAnimation(traceLineKeys, runId);
+
+  const showTrace =
+    Boolean(run?.trace) || run?.status === "pending" || run?.status === "running";
 
   if (!run) {
     return (
@@ -49,13 +85,6 @@ function RunDetailPage() {
       </main>
     );
   }
-
-  const jsonPayload =
-    run.result !== undefined
-      ? run.result
-      : run.error !== undefined
-        ? { error: run.error }
-        : null;
 
   return (
     <main className="relative mx-auto flex min-h-svh w-full max-w-5xl flex-col gap-8 p-6 md:p-10">
@@ -106,14 +135,6 @@ function RunDetailPage() {
               {formatTimestamp(run._creationTime)}
             </dd>
           </div>
-          <div className="space-y-1 sm:col-span-2">
-            <dt className="font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
-              Goal
-            </dt>
-            <dd className="text-sm text-muted-foreground">
-              {run.target?.goal ?? "—"}
-            </dd>
-          </div>
           <div className="space-y-1">
             <dt className="font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
               Started
@@ -133,30 +154,112 @@ function RunDetailPage() {
         </dl>
       </section>
 
+      {run.error ? (
+        <section className="animate-fade-up space-y-3" style={{ animationDelay: "120ms" }}>
+          <h2 className="font-heading text-lg font-medium tracking-tight">Error</h2>
+          <div className="overflow-hidden rounded-lg border border-destructive/40 bg-destructive/5 p-4">
+            <p className="font-mono text-xs leading-relaxed wrap-break-word text-destructive">
+              {run.error}
+            </p>
+          </div>
+        </section>
+      ) : null}
+
       <section className="animate-fade-up space-y-3" style={{ animationDelay: "120ms" }}>
-        <h2 className="font-heading text-lg font-medium tracking-tight">Extracted JSON</h2>
+        <div className="flex items-baseline justify-between gap-4">
+          <h2 className="font-heading text-lg font-medium tracking-tight">Opportunities</h2>
+          <p className="font-mono text-xs text-muted-foreground">{opportunities.length} found</p>
+        </div>
         <div className="overflow-hidden rounded-lg border border-border/80 bg-card/80 shadow-[0_1px_0_oklch(0.92_0.01_230)] backdrop-blur-sm">
-          {jsonPayload !== null ? (
-            <pre className="max-h-[min(70vh,48rem)] overflow-auto p-4 font-mono text-xs leading-relaxed text-foreground whitespace-pre-wrap wrap-break-word">
-              {JSON.stringify(jsonPayload, null, 2)}
-            </pre>
+          {opportunities.length > 0 ? (
+            <Table className="table-fixed">
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="w-[34%] px-3 font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
+                    Opportunity
+                  </TableHead>
+                  <TableHead className="w-[18%] px-2 font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
+                    Agency
+                  </TableHead>
+                  <TableHead className="w-[16%] px-2 font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
+                    Deadline
+                  </TableHead>
+                  <TableHead className="w-[16%] px-2 font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
+                    Location
+                  </TableHead>
+                  <TableHead className="w-[16%] px-3 font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
+                    Amount
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {opportunities.map((opportunity) => (
+                  <TableRow
+                    key={opportunity._id}
+                    className={`cursor-pointer hover:bg-accent/40${isNewOpportunity(opportunity._id) ? " animate-fade-in" : ""}`}
+                    onClick={() =>
+                      void navigate({
+                        to: "/opportunities/$opportunityId",
+                        params: { opportunityId: opportunity._id },
+                      })
+                    }
+                  >
+                    <TableCell className="max-w-0 px-3 py-2.5 align-top whitespace-normal">
+                      <span className="line-clamp-2 text-sm font-medium">
+                        {opportunity.title}
+                      </span>
+                      {opportunity.description ? (
+                        <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+                          {opportunity.description}
+                        </p>
+                      ) : null}
+                    </TableCell>
+                    <TableCell className="max-w-0 px-2 py-2.5 align-top text-sm whitespace-normal wrap-break-word text-muted-foreground">
+                      {opportunity.agency ?? "—"}
+                    </TableCell>
+                    <TableCell className="max-w-0 px-2 py-2.5 align-top text-sm whitespace-normal wrap-break-word text-muted-foreground">
+                      {opportunity.deadline ?? "—"}
+                    </TableCell>
+                    <TableCell className="max-w-0 px-2 py-2.5 align-top text-sm whitespace-normal wrap-break-word text-muted-foreground">
+                      {opportunity.location ?? "—"}
+                    </TableCell>
+                    <TableCell className="max-w-0 px-3 py-2.5 align-top font-mono text-xs whitespace-normal wrap-break-word text-muted-foreground">
+                      {opportunity.amount ?? "—"}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           ) : (
             <p className="px-4 py-8 text-center text-sm text-muted-foreground">
               {run.status === "pending" || run.status === "running"
-                ? "No result yet — this run is still in progress."
-                : "No extracted data for this run."}
+                ? "No opportunities yet — this run is still in progress."
+                : "No opportunities found for this run."}
             </p>
           )}
         </div>
       </section>
 
-      {run.trace ? (
+      {showTrace ? (
         <section className="animate-fade-up space-y-3" style={{ animationDelay: "180ms" }}>
           <h2 className="font-heading text-lg font-medium tracking-tight">Trace</h2>
           <div className="overflow-hidden rounded-lg border border-border/80 bg-card/80 shadow-[0_1px_0_oklch(0.92_0.01_230)] backdrop-blur-sm">
-            <pre className="max-h-80 overflow-auto p-4 font-mono text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap wrap-break-word">
-              {run.trace}
-            </pre>
+            {traceLines.length > 0 ? (
+              <div className="max-h-80 overflow-auto p-4 font-mono text-xs leading-relaxed text-muted-foreground">
+                {traceLines.map((line, index) => (
+                  <p
+                    key={index}
+                    className={`whitespace-pre-wrap wrap-break-word${isNewTraceLine(String(index)) ? " animate-fade-in" : ""}`}
+                  >
+                    {line || "\u00a0"}
+                  </p>
+                ))}
+              </div>
+            ) : (
+              <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+                Waiting for scrape steps…
+              </p>
+            )}
           </div>
         </section>
       ) : null}

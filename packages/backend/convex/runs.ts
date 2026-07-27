@@ -92,10 +92,26 @@ export const claimNext = mutation({
       target: {
         _id: target._id,
         url: target.url,
-        goal: target.goal,
         enabled: target.enabled,
       },
     };
+  },
+});
+
+/** Worker replaces the run's trace with the full current log (live progress). */
+export const setTrace = mutation({
+  args: {
+    workerSecret: v.string(),
+    runId: v.id("runs"),
+    trace: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertWorkerSecret(args.workerSecret);
+    const run = await ctx.db.get(args.runId);
+    if (!run) {
+      throw new Error("Run not found");
+    }
+    await ctx.db.patch(args.runId, { trace: args.trace });
   },
 });
 
@@ -104,7 +120,6 @@ export const complete = mutation({
     workerSecret: v.string(),
     runId: v.id("runs"),
     status: v.union(v.literal("succeeded"), v.literal("failed")),
-    result: v.optional(v.any()),
     error: v.optional(v.string()),
     trace: v.optional(v.string()),
   },
@@ -116,9 +131,8 @@ export const complete = mutation({
     }
     await ctx.db.patch(args.runId, {
       status: args.status,
-      result: args.result,
       error: args.error,
-      trace: args.trace,
+      ...(args.trace !== undefined ? { trace: args.trace } : {}),
       finishedAt: Date.now(),
     });
   },

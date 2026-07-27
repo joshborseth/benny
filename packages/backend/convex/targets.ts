@@ -18,13 +18,11 @@ export const get = query({
 export const create = mutation({
   args: {
     url: v.string(),
-    goal: v.string(),
     enabled: v.boolean(),
   },
   handler: async (ctx, args) => {
     return await ctx.db.insert("targets", {
       url: args.url,
-      goal: args.goal,
       enabled: args.enabled,
     });
   },
@@ -34,7 +32,6 @@ export const update = mutation({
   args: {
     id: v.id("targets"),
     url: v.string(),
-    goal: v.string(),
     enabled: v.boolean(),
   },
   handler: async (ctx, args) => {
@@ -44,7 +41,6 @@ export const update = mutation({
     }
     await ctx.db.replace(args.id, {
       url: args.url,
-      goal: args.goal,
       enabled: args.enabled,
     });
   },
@@ -61,6 +57,14 @@ export const remove = mutation({
       .collect();
     for (const cred of creds) {
       await ctx.db.delete(cred._id);
+    }
+
+    const opportunities = await ctx.db
+      .query("opportunities")
+      .withIndex("by_target", (q) => q.eq("targetId", args.id))
+      .collect();
+    for (const opportunity of opportunities) {
+      await ctx.db.delete(opportunity._id);
     }
 
     const runs = await ctx.db

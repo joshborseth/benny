@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { convexQuery } from "@convex-dev/react-query";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
@@ -29,6 +29,7 @@ import {
 } from "@benny/ui/components/table";
 import { RunStatusBadge } from "@/components/run-status-badge";
 import { TargetFormDialog } from "@/components/target-form-dialog";
+import { useEnterAnimation } from "@/hooks/use-enter-animation";
 import { emptyTargetFormValues, type TargetFormValues } from "@/lib/schemas/target-form";
 
 export const Route = createFileRoute("/")({
@@ -46,6 +47,14 @@ function formatCreatedAt(timestamp: number) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(timestamp);
+}
+
+function lastTraceLine(trace: string | undefined) {
+  if (!trace) {
+    return undefined;
+  }
+  const lines = trace.split("\n").filter((line) => line.trim().length > 0);
+  return lines.at(-1);
 }
 
 function CredentialBadge({ targetId }: { targetId: Id<"targets"> }) {
@@ -69,6 +78,9 @@ function TargetsPage() {
   const removeTarget = useMutation(api.targets.remove);
   const enqueueRun = useMutation(api.runs.enqueue);
 
+  const runIds = useMemo(() => runs.map((run) => run._id), [runs]);
+  const isNewRun = useEnterAnimation(runIds);
+
   const [dialog, setDialog] = useState<DialogState>({ type: "closed" });
   const [deleteId, setDeleteId] = useState<Id<"targets"> | null>(null);
   const [enqueueingId, setEnqueueingId] = useState<Id<"targets"> | null>(null);
@@ -77,7 +89,6 @@ function TargetsPage() {
     dialog.type === "edit"
       ? {
           url: dialog.row.url,
-          goal: dialog.row.goal,
           enabled: dialog.row.enabled,
           username: "",
           password: "",
@@ -113,9 +124,7 @@ function TargetsPage() {
           <Empty className="border-0 py-20">
             <EmptyHeader>
               <EmptyTitle>No targets yet</EmptyTitle>
-              <EmptyDescription>
-                Add a URL, scrape goal, and optional login credentials.
-              </EmptyDescription>
+              <EmptyDescription>Add a URL and optional login credentials.</EmptyDescription>
             </EmptyHeader>
             <Button type="button" onClick={() => setDialog({ type: "create" })}>
               <PlusIcon data-icon="inline-start" />
@@ -128,9 +137,6 @@ function TargetsPage() {
               <TableRow className="hover:bg-transparent">
                 <TableHead className="px-4 font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
                   URL
-                </TableHead>
-                <TableHead className="font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
-                  Goal
                 </TableHead>
                 <TableHead className="font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
                   Creds
@@ -155,9 +161,6 @@ function TargetsPage() {
                     >
                       {row.url}
                     </a>
-                  </TableCell>
-                  <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground">
-                    {row.goal}
                   </TableCell>
                   <TableCell>
                     <CredentialBadge targetId={row._id} />
@@ -230,7 +233,7 @@ function TargetsPage() {
                     Created
                   </TableHead>
                   <TableHead className="px-4 font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
-                    Result / error
+                    Progress / error
                   </TableHead>
                 </TableRow>
               </TableHeader>
@@ -240,13 +243,11 @@ function TargetsPage() {
                   const detail =
                     run.status === "failed"
                       ? run.error
-                      : run.result
-                        ? JSON.stringify(run.result)
-                        : run.trace;
+                      : lastTraceLine(run.trace);
                   return (
                     <TableRow
                       key={run._id}
-                      className="cursor-pointer hover:bg-accent/40"
+                      className={`cursor-pointer hover:bg-accent/40${isNewRun(run._id) ? " animate-fade-in" : ""}`}
                       onClick={() =>
                         void navigate({ to: "/runs/$runId", params: { runId: run._id } })
                       }
@@ -261,7 +262,13 @@ function TargetsPage() {
                         {formatCreatedAt(run._creationTime)}
                       </TableCell>
                       <TableCell className="max-w-xs truncate px-4 font-mono text-xs text-muted-foreground">
-                        {detail ?? "—"}
+                        {detail ? (
+                          <span key={detail} className="animate-fade-in block truncate">
+                            {detail}
+                          </span>
+                        ) : (
+                          "—"
+                        )}
                       </TableCell>
                     </TableRow>
                   );
