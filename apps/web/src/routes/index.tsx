@@ -220,19 +220,19 @@ function TargetsPage() {
               No runs yet. Hit play on a target to enqueue one.
             </p>
           ) : (
-            <Table>
+            <Table className="table-fixed">
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="px-4 font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
+                  <TableHead className="w-[34%] px-3 font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
                     Target
                   </TableHead>
-                  <TableHead className="font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
+                  <TableHead className="w-[14%] px-2 font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
                     Status
                   </TableHead>
-                  <TableHead className="font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
+                  <TableHead className="w-[18%] px-2 font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
                     Created
                   </TableHead>
-                  <TableHead className="px-4 font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
+                  <TableHead className="w-[34%] px-3 font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
                     Progress / error
                   </TableHead>
                 </TableRow>
@@ -252,18 +252,20 @@ function TargetsPage() {
                         void navigate({ to: "/runs/$runId", params: { runId: run._id } })
                       }
                     >
-                      <TableCell className="px-4 py-3 font-mono text-[13px]">
-                        {target?.url ?? String(run.targetId)}
+                      <TableCell className="max-w-0 px-3 py-2.5 font-mono text-[13px] whitespace-normal">
+                        <span className="line-clamp-2 wrap-break-word">
+                          {target?.url ?? String(run.targetId)}
+                        </span>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="max-w-0 px-2 py-2.5 align-middle">
                         <RunStatusBadge status={run.status} />
                       </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
+                      <TableCell className="max-w-0 px-2 py-2.5 font-mono text-xs whitespace-normal wrap-break-word text-muted-foreground">
                         {formatCreatedAt(run._creationTime)}
                       </TableCell>
-                      <TableCell className="max-w-xs truncate px-4 font-mono text-xs text-muted-foreground">
+                      <TableCell className="max-w-0 px-3 py-2.5 font-mono text-xs whitespace-normal text-muted-foreground">
                         {detail ? (
-                          <span key={detail} className="animate-fade-in block truncate">
+                          <span key={detail} className="animate-fade-in line-clamp-2 wrap-break-word">
                             {detail}
                           </span>
                         ) : (
